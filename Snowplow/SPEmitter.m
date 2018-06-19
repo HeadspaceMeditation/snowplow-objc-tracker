@@ -46,6 +46,7 @@
     BOOL               _isSending;
     NSOperationQueue * _dataOperationQueue;
     BOOL               _builderFinished;
+    dispatch_queue_t   _queue;
 }
 
 const NSInteger POST_WRAPPER_BYTES = 88;
@@ -76,6 +77,7 @@ const NSInteger POST_STM_BYTES = 22;
         _db = [[SPEventStore alloc] init];
         _dataOperationQueue = [[NSOperationQueue alloc] init];
         _builderFinished = NO;
+        _queue = dispatch_queue_create("com.snowplow.emitterqueue", DISPATCH_QUEUE_SERIAL);
     }
     return self;
 }
@@ -152,20 +154,16 @@ const NSInteger POST_STM_BYTES = 22;
 // Builder Finished
 
 - (void) addPayloadToBuffer:(SPPayload *)spPayload {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(_queue, ^{
         [_db insertEvent:spPayload];
-        [self flushBuffer];
+        [self sendGuard];
     });
 }
 
 - (void) flushBuffer {
-    if ([NSThread isMainThread]) {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            [self sendGuard];
-        });
-    } else {
+    dispatch_async(_queue, ^{
         [self sendGuard];
-    }
+    });
 }
 
 - (void) sendGuard {
@@ -177,7 +175,6 @@ const NSInteger POST_STM_BYTES = 22;
 
 - (void) sendEvents {
     SnowplowDLog(@"SPLog: Sending events...");
-    
     if ([self getDbCount] == 0) {
         SnowplowDLog(@"SPLog: Database empty. Returning..");
         _isSending = NO;
